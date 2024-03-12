@@ -1,6 +1,9 @@
-const {ipcRenderer} = require("electron");
+const {ipcRenderer, dialog} = require("electron");
 const fs = require('fs');
 const {execSync} = require("child_process");
+const unzipper = require('unzipper');
+const fetch = require('node-fetch');
+const path = require('path');
 
 const inputFiles = []
 let commands = []
@@ -138,23 +141,109 @@ function handleFileSelect(event) {
     refreshCommand(event);
 }
 
+function isFFmpegInstalled() {
+    try {
+        execSync('ffmpeg -version');
+        console.log('FFmpeg 已安装');
+        return true;
+    } catch (error) {
+        console.error('FFmpeg 未安装:', error);
+        return false;
+    }
+}
+
+function findFFmpegDir(startDir) {
+    try {
+        // 遍历目录下的所有文件和文件夹
+        const files = fs.readdirSync(startDir);
+        for (const file of files) {
+            const filePath = path.join(startDir, file);
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+                // 如果是目录，则递归查找
+                const ffmpegDir = findFFmpegDir(filePath);
+                if (ffmpegDir) {
+                    return ffmpegDir;
+                }
+            } else if (file === 'ffmpeg.exe' || file === 'ffmpeg') {
+                // 如果找到了 ffmpeg.exe 或者 ffmpeg 文件，则返回当前目录
+                return startDir;
+            }
+        }
+    } catch (error) {
+        console.error('遍历目录时出错:', error);
+    }
+}
+
+function addToPath(envPath, dir) {
+    // 将目录添加到环境变量 PATH 中
+    return `${dir}${path.delimiter}${envPath}`;
+}
+
+
+async function downloadAndExtract(url, outputPath) {
+    try {
+        // 下载文件
+        console.log('开始下载文件...');
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`下载文件失败: ${response.statusText}`);
+        }
+        const buffer = await response.buffer();
+
+        // 保存文件到本地
+        console.log('开始保存文件到本地...');
+        fs.writeFileSync('ffmpeg-release-essentials.zip', buffer);
+
+        // 解压文件
+        console.log('开始解压文件...');
+        fs.createReadStream('ffmpeg-release-essentials.zip')
+            .pipe(unzipper.Extract({path: outputPath}))
+            .on('close', () => {
+                console.log('文件下载并解压成功！');
+            });
+    } catch (error) {
+        console.error('下载并解压文件时出错:', error);
+    }
+}
+
+
 function startCutter() {
     const commands = refreshCommand();
     console.log(commands);
+    // 检查ffmpeg
+    if (!isFFmpegInstalled()) {
+        console.log('请下载并安装 FFmpeg');
+        // 在此处添加跳转到官网下载的代码示例
 
+        const confirmResult = window.confirm('未检测到安装的FFmpeg，是否前往官网下载解压安装到程序目录？');
+        if (confirmResult) {
+            // const url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
+            // const outputPath = './'; // 保存解压后文件的路径
+            // downloadAndExtract(url, outputPath)
+            //     .then(res => alert("下载完毕"))
+            //     .catch(error => {
+            //         alert("下载出错，请手动下载安装！")
+            //         window.open('https://ffmpeg.org/download.html', '_blank');
+            //     })
+            window.open('https://ffmpeg.org/download.html', '_blank');
+        }
+        return;
+    }
+
+    // 执行命令
     const resultDiv = document.getElementById("result-message");
-
     for (const command of commands) {
         try {
             execSync(command);
             console.log('执行命令成功:', command);
         } catch (error) {
             console.error('执行命令失败:', command);
-            resultDiv.textContent = `剪切失败，执行命令时发生错误: ${command}`;
+            resultDiv.textContent = `执行命令时发生错误: ${command}\n ${error}`;
             return;
         }
     }
-
+    // 提示并清除缓存
     if (fs.existsSync(outFile)) {
         console.log('输出文件:', outFile);
         resultDiv.textContent = `输出文件: ${outFile}`;
@@ -166,8 +255,18 @@ function startCutter() {
 }
 
 function init() {
-    // 等待 DOMContentLoaded 事件触发后再执行初始化代码
-    document.addEventListener("DOMContentLoaded", function() {
+    console.log("dialog", dialog)
+    const ffmpegDir = findFFmpegDir(".");
+    if (ffmpegDir) {
+        console.log(`找到 FFmpeg 目录: ${ffmpegDir}`);
+        // 将 FFmpeg 目录添加到环境变量 PATH 中
+        process.env.PATH = addToPath(process.env.PATH, ffmpegDir);
+    } else {
+        console.log('未找到 FFmpeg 目录');
+    }
+
+    // 等待 DOMContentLoaded 事件触发后再执行初始化代码 不显示其他控件
+    document.addEventListener("DOMContentLoaded", function () {
         showElement("format-time", false);
     });
 }
